@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://myglplabs.com'),
   title: 'My GLP Labs | Weight loss care without the runaround',
   description: 'Transparent online GLP-1 weight care with licensed providers, medication delivery, and ongoing support. No insurance needed.',
+  icons: { icon: '/logo-mark.svg' },
   openGraph: {
     title: 'Weight loss care. Without the runaround.',
     description: 'GLP-1 treatment, provider support, and delivery in one clear plan.',
@@ -29,3 +30,4 @@ export default function RootLayout({
     </html>
   );
 }
+
