@@ -37,7 +37,7 @@ jobs:
         working-directory: _update_portal
         run: |
           npm install --global pnpm@11.25.0 --ignore-scripts
-          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts --ignore-workspace
       - name: Security and workflow tests
         working-directory: _update_portal
         env:
