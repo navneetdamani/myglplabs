@@ -1,4 +1,5 @@
-import { FILES } from './policy.mjs';
+import { FILES,validateProposal } from './policy.mjs';
+import { digest,token } from './store.mjs';
 import { plan } from './agent.mjs';
 export class Worker {
   constructor(config,store,github,planner=plan) { Object.assign(this,{config,store,github,planner}); }
@@ -15,12 +16,46 @@ export class Worker {
     try {
       // Free database expiry is a hard stop, including for rollback; never silently renew paid resources.
       if (this.config.pilotEndsAt && Date.now() >= this.config.pilotEndsAt) { await this.pause(); return; }
+      for(const r of await this.store.all("SELECT id,data FROM requests WHERE status='awaiting-local'"))if(JSON.parse(r.data).localLeaseExpires<Date.now())await this.store.state(r.id,'failed',{reason:'Local processing was interrupted. Resubmit when the computer is available.',localLeaseHash:null,files:null});
       // Finish the current merge/deployment before planning any following change.
       const row = await this.store.one("SELECT id FROM requests WHERE status IN ('checking','deploying') ORDER BY created LIMIT 1")
         || await this.store.one("SELECT id FROM requests WHERE status='queued-rollback' ORDER BY created LIMIT 1")
-        || (!await this.paused() && await this.store.one("SELECT id FROM requests WHERE status='queued' ORDER BY created LIMIT 1"));
+        || (this.config.aiMode!=='local-chatgpt' && !await this.paused() && await this.store.one("SELECT id FROM requests WHERE status='queued' ORDER BY created LIMIT 1"));
       if (row) await this.process(await this.store.get(row.id));
     } finally { this.busy = false; }
+  }
+  async claim() {
+    if(this.busy||await this.paused()||this.config.pilotEndsAt&&Date.now()>=this.config.pilotEndsAt)return null;
+    this.busy=true;
+    try {
+      if(await this.store.one("SELECT id FROM requests WHERE status IN ('checking','deploying','planning','awaiting-local','queued-rollback') LIMIT 1"))return null;
+      const rows=await this.store.all("SELECT id,data FROM requests WHERE status='queued' ORDER BY created LIMIT 20");
+      const row=rows.find(r=>!(JSON.parse(r.data).nextAttempt>Date.now()));if(!row)return null;
+      const request=await this.store.get(row.id);
+      if(request.data.targetRepo!=='navneetdamani/myglplabs'||request.uid!==this.config.adminId&&!this.config.emails?.includes(request.data.editorEmail)){await this.store.state(request.id,'failed',{reason:'Request authorization or website target is no longer valid'});return null;}
+      const base=await this.github.main(),files=await this.github.files(base,FILES),lease=token();
+      await this.store.limit('local-worker:claims',40,86400000);
+      await this.store.state(request.id,'awaiting-local',{base,files,localLeaseHash:digest(lease),localLeaseExpires:Date.now()+900000});
+      return{id:request.id,prompt:request.prompt,files,lease};
+    }finally{this.busy=false;}
+  }
+  async complete(id,input) {
+    if(this.busy)throw Object.assign(Error('Worker busy'),{status:409});
+    this.busy=true;
+    try {
+      const request=await this.store.get(id);
+      if(!request||request.status!=='awaiting-local'||typeof input.lease!=='string'||digest(input.lease)!==request.data.localLeaseHash||Date.now()>=request.data.localLeaseExpires)throw Object.assign(Error('Worker lease invalid or expired'),{status:409});
+      if(this.config.pilotEndsAt&&Date.now()>=this.config.pilotEndsAt)throw Object.assign(Error('Pilot expired'),{status:403});
+      if(request.data.targetRepo!=='navneetdamani/myglplabs'||request.uid!==this.config.adminId&&!this.config.emails?.includes(request.data.editorEmail)){await this.store.state(id,'failed',{reason:'Request authorization or website target is no longer valid',localLeaseHash:null,files:null});return;}
+      if(input.deferred===true){await this.store.state(id,'queued',{nextAttempt:Date.now()+1800000,reason:'Waiting for the local ChatGPT worker. No paid API fallback.',localLeaseHash:null,files:null});return;}
+      try {
+        const edits=validateProposal(input.proposal,request.data.files);
+        if(await this.github.main()!==request.data.base)throw Error('Main advanced; submit a new request against current website');
+        await this.store.state(id,'planning',{localLeaseHash:null,files:null});
+        const proposal=await this.github.proposal(id,request.data.base,edits);
+        await this.store.state(id,'checking',{...proposal,started:Date.now(),reason:null});
+      }catch(error){await this.store.state(id,'failed',{reason:error.message,localLeaseHash:null,files:null});}
+    }finally{this.busy=false;}
   }
   async process(r) {
     const {store:s,github:g,config:c} = this;

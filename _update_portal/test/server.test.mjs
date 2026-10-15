@@ -4,9 +4,15 @@ import { once } from 'node:events';
 import { Store, digest } from '../store.mjs';
 import { createServer,config,setupServer } from '../server.mjs';
 const c={origin:'https://portal.example',emails:['editor@example.com'],adminId:'owner',clientId:'client',clientSecret:'secret'};
+test('worker endpoints require scoped bearer; browser session cannot claim work',()=>withServer(async({base,raw})=>{
+ const url=base+'/api/worker/claim',h={'Content-Type':'application/json'};
+ assert.equal((await fetch(url,{method:'POST',headers:{...h,Cookie:'__Host-session='+raw},body:'{}'})).status,401);
+ assert.equal((await fetch(url,{method:'POST',headers:{...h,Authorization:'Bearer '+'x'.repeat(43)},body:'{}'})).status,401);
+ const response=await fetch(url,{method:'POST',headers:{...h,Authorization:'Bearer '+'a'.repeat(43)},body:'{}'});assert.equal(response.status,200);assert.deepEqual(await response.json(),{job:null});
+},undefined,{workerTokenHash:digest('a'.repeat(43)),worker:{claim:async()=>null,paused:async()=>false}}));
 async function withServer(fn,transport,overrides={}) {
   const s=new Store(':memory:'),g={main:async()=>'main',json:async path=>path==='/user'?{id:2,login:'editor'}:[{email:'editor@example.com',verified:true}]};
-  const w={paused:()=>false,pause:()=>{}},server=createServer({...c,...overrides},s,g,w,transport);
+  const w=overrides.worker||{paused:()=>false,pause:()=>{}},server=createServer({...c,...overrides},s,g,w,transport);
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`;
   const raw=await s.session('2','editor','editor@example.com'),csrf=s.db.prepare('SELECT csrf FROM sessions').get().csrf;

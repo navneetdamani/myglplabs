@@ -8,8 +8,9 @@ import { Worker } from './worker.mjs';
 
 export function config(env=process.env) {
   const required = ['PORTAL_ORIGIN','ALLOWED_EMAILS','GITHUB_OAUTH_CLIENT_ID','GITHUB_OAUTH_CLIENT_SECRET',
-    'GITHUB_APP_ID','GITHUB_INSTALLATION_ID','GITHUB_APP_PRIVATE_KEY','OPENAI_API_KEY','OPENAI_MODEL'];
+    'GITHUB_APP_ID','GITHUB_INSTALLATION_ID','GITHUB_APP_PRIVATE_KEY','LOCAL_WORKER_TOKEN_SHA256'];
   for (const name of required) if (!env[name]) throw Error(`Missing configuration: ${name}`);
+  if(!/^[a-f0-9]{64}$/.test(env.LOCAL_WORKER_TOKEN_SHA256))throw Error('Invalid local worker configuration');
   const origin = new URL(env.PORTAL_ORIGIN);
   if (origin.protocol!=='https:' || origin.origin!==env.PORTAL_ORIGIN) throw Error('PORTAL_ORIGIN must be an HTTPS origin');
   const pilotEndsAt=env.PILOT_ENDS_AT ? Date.parse(env.PILOT_ENDS_AT) : null;
@@ -19,17 +20,17 @@ export function config(env=process.env) {
   if (!emails.length || emails.some(s=>!s.includes('@'))) throw Error('Configure allowed emails');
   return {origin:origin.origin,emails,adminId:'258078742',clientId:env.GITHUB_OAUTH_CLIENT_ID,
     clientSecret:env.GITHUB_OAUTH_CLIENT_SECRET,appId:env.GITHUB_APP_ID,installationId:env.GITHUB_INSTALLATION_ID,
-    appKey:env.GITHUB_APP_PRIVATE_KEY.replaceAll('\\n','\n'),openaiKey:env.OPENAI_API_KEY,model:env.OPENAI_MODEL,
+    appKey:env.GITHUB_APP_PRIVATE_KEY.replaceAll('\\n','\n'),aiMode:'local-chatgpt',workerTokenHash:env.LOCAL_WORKER_TOKEN_SHA256,
     autoPublish:env.AUTO_PUBLISH==='true',port:Number(env.PORT || 10000),dataDir:env.DATA_DIR || '/var/data',
     databaseUrl:env.DATABASE_URL,pilotEndsAt};
 }
 const fail = (status,message) => { throw Object.assign(Error(message),{status}); };
 function cookie(req,name) { return req.headers.cookie?.split(';').map(s=>s.trim()).find(s=>s.startsWith(`${name}=`))?.slice(name.length+1) || ''; }
 const same = (a,b) => typeof a==='string' && typeof b==='string' && Buffer.byteLength(a)===Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
-async function body(req) {
+async function body(req,maxBytes=10000) {
   if (!req.headers['content-type']?.startsWith('application/json')) fail(415,'JSON required');
   let text='';
-  for await (const chunk of req) { text+=chunk; if (Buffer.byteLength(text)>10000) fail(413,'Request too large'); }
+  for await (const chunk of req) { text+=chunk; if (Buffer.byteLength(text)>maxBytes) fail(413,'Request too large'); }
   try { return JSON.parse(text); } catch { fail(400,'Invalid JSON'); }
 }
 export function createServer(c,s,g,worker,transport=fetch) {
@@ -80,6 +81,20 @@ export function createServer(c,s,g,worker,transport=fetch) {
           '__Host-oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0']);
         return redirect('/');
       }
+      if(path.startsWith('/api/worker/')) {
+        const bearer=req.headers.authorization?.match(/^Bearer ([a-zA-Z0-9_-]{43,128})$/)?.[1];
+        if(!bearer||!c.workerTokenHash||!same(digest(bearer),c.workerTokenHash))fail(401,'Worker authorization required');
+        if(req.method!=='POST')fail(405,'POST required');
+        await s.limit('local-worker:api',90,60000);
+        const input=await body(req,30000);
+        if(path==='/api/worker/claim') {
+          await s.run("INSERT INTO settings VALUES('local-worker-seen',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(Date.now()));
+          return json(200,{job:await worker.claim()});
+        }
+        const result=path.match(/^\/api\/worker\/results\/([a-f0-9-]{36})$/);
+        if(result){await worker.complete(result[1],input);return json(200,{ok:true});}
+        fail(404,'Not found');
+      }
       const user=await s.one('SELECT * FROM sessions WHERE hash=? AND expires>?',digest(cookie(req,'__Host-session')),Date.now());
       if(!user || user.uid!==c.adminId && !c.emails.includes(user.email)) fail(401,'Sign in to continue');
       const admin=user.uid===c.adminId;
@@ -87,7 +102,7 @@ export function createServer(c,s,g,worker,transport=fetch) {
       if(req.method!=='GET') {
         if(req.headers.origin!==c.origin || !same(req.headers['x-csrf-token'],user.csrf)) fail(403,'Invalid request origin or token');
       }
-      if(req.method==='GET' && path==='/api/me') return json(200,{login:user.login,csrf:user.csrf,admin,autoPublish:c.autoPublish,paused:await worker.paused(),pilotEndsAt:c.pilotEndsAt});
+      if(req.method==='GET' && path==='/api/me') return json(200,{login:user.login,csrf:user.csrf,admin,autoPublish:c.autoPublish,aiMode:'local-chatgpt',workerOnline:Date.now()-Number((await s.one("SELECT value FROM settings WHERE key='local-worker-seen'"))?.value||0)<120000,paused:await worker.paused(),pilotEndsAt:c.pilotEndsAt});
       if(req.method==='POST' && path==='/auth/logout') {
         await s.run('DELETE FROM sessions WHERE hash=?',user.hash);await s.audit(user.uid,'','logout');
         res.setHeader('Set-Cookie','__Host-session=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0');return json(200,{ok:true});
@@ -98,7 +113,7 @@ export function createServer(c,s,g,worker,transport=fetch) {
         const input=await body(req),key=req.headers['idempotency-key'];
         if(typeof input.prompt!=='string' || input.prompt.trim().length<10 || input.prompt.length>4000 || /\x00/.test(input.prompt)) fail(400,'Describe a change in 10–4000 characters');
         if(typeof key!=='string' || !/^[a-zA-Z0-9-]{16,64}$/.test(key)) fail(400,'Idempotency key required');
-        return json(202,{id:await s.submit(user.uid,input.prompt.trim(),key)});
+        return json(202,{id:await s.submit(user.uid,input.prompt.trim(),key,{editorEmail:user.email,targetRepo:'navneetdamani/myglplabs'})});
       }
       if(req.method==='GET' && path==='/api/audit') {
         if(!admin) fail(403,'Administrator access required');

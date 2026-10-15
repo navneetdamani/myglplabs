@@ -14,7 +14,7 @@ async function refresh(){
   if(!rows.length)$('history').append(node('p','Your first update starts here.'));
   for(const r of rows){
     const record=node('article','','record'),title=node('strong',r.prompt.slice(0,120));
-    title.append(node('small',`${r.id.slice(0,8)} · ${new Date(r.created).toLocaleString()}`));record.append(title,node('span',r.status.replaceAll('-',' '),'badge'));
+    title.append(node('small',`${r.id.slice(0,8)} · ${new Date(r.created).toLocaleString()}`));record.append(title,node('span',r.status==='awaiting-local'?'working on your computer':r.status.replaceAll('-',' '),'badge'));
     if(r.data.url)record.append(safeLink(r.data.url,'View change ↗'));
     if(r.data.deployment)record.append(safeLink(r.data.deployment,'Deployment ↗'));
     if(r.data.reason)record.append(node('p',r.data.reason,'reason'));
@@ -30,6 +30,7 @@ async function refresh(){
 async function start(){
   try{me=await api('/api/me');$('workspace').hidden=false;$('logout').hidden=false;$('admin').hidden=!me.admin;
     $('publishing').textContent=!me.autoPublish?'Publishing is awaiting administrator activation.':me.paused?'Publishing is paused.':'Automatic publishing is active. All checks must pass.';
+    if(me.aiMode==='local-chatgpt')$('publishing').textContent+=me.workerOnline?' Your computer is connected. Using the owner’s ChatGPT plan.':' Waiting for the owner’s computer. Requests remain queued; paid API fallback is disabled.';
     if(me.pilotEndsAt)$('publishing').textContent+=` Free pilot processing ends ${new Date(me.pilotEndsAt).toLocaleString()}. Export records before database expiry.`;
     await refresh();
   }catch(e){$('login').hidden=false;}

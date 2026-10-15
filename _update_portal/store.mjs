@@ -99,12 +99,12 @@ export class Store {
       await this.run('INSERT INTO quota VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=quota.count+1',key,now+windowMs);
     });
   }
-  submit(uid,prompt,key) {
+  submit(uid,prompt,key,data={}) {
     return this.transaction(async()=>{
       const old=await this.one('SELECT id FROM requests WHERE uid=? AND idempotency=?',uid,key);if(old)return old.id;
       await this.limit(`submit:${uid}`,5,3600000);await this.limit('global:submit',20,86400000);
       if((await this.one("SELECT COUNT(*) AS n FROM requests WHERE status IN ('queued','planning','checking','deploying')")).n>=20)throw Object.assign(Error('Queue is full'),{status:429});
-      const id=randomUUID();await this.run('INSERT INTO requests(id,uid,prompt,created,status,idempotency) VALUES(?,?,?,?,?,?)',id,uid,prompt,Date.now(),'queued',key);
+      const id=randomUUID();await this.run('INSERT INTO requests(id,uid,prompt,created,status,idempotency,data) VALUES(?,?,?,?,?,?,?)',id,uid,prompt,Date.now(),'queued',key,JSON.stringify(data));
       await this.audit(uid,id,'submitted',{promptHash:digest(prompt)});return id;
     });
   }
@@ -128,7 +128,7 @@ export class Store {
       const target=await this.get(targetId);
       if(!target || !['deployed','deployment-failed'].includes(target.status) || target.data.rollbackOf)throw Object.assign(Error('Request is not eligible for rollback'),{status:409});
       await this.limit(`rollback:${uid}`,3,3600000);
-      if(await this.one("SELECT id FROM requests WHERE status IN ('planning','checking','deploying','queued-rollback') LIMIT 1"))throw Object.assign(Error('Another change is active'),{status:409});
+      if(await this.one("SELECT id FROM requests WHERE status IN ('planning','checking','deploying','awaiting-local','queued-rollback') LIMIT 1"))throw Object.assign(Error('Another change is active'),{status:409});
       const id=randomUUID();await this.run('INSERT INTO requests(id,uid,prompt,created,status,data,idempotency) VALUES(?,?,?,?,?,?,?)',id,uid,'Administrator rollback',Date.now(),'queued-rollback',JSON.stringify({rollbackOf:target.id}),`rollback-${target.id}`);
       await this.run("INSERT INTO settings VALUES('paused','true') ON CONFLICT(key) DO UPDATE SET value='true'");
       await this.audit(uid,id,'rollback-requested',{target:target.id});return id;
