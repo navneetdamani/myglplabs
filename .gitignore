@@ -37,3 +37,7 @@ next-env.d.ts
 /outputs/
 /work/
 
+# Private portal runtime files
+**/node_modules/
+*.sqlite*
+*.db
