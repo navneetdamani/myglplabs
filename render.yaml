@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: myglplabs-update-portal
+    runtime: docker
+    plan: free
+    region: oregon
+    autoDeployTrigger: "off"
+    dockerfilePath: ./_update_portal/Dockerfile
+    dockerContext: ./_update_portal
+    healthCheckPath: /healthz
+    numInstances: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: myglplabs-portal-pilot-db
+          property: connectionString
+      - key: SETUP_MODE
+        value: "true"
+      - key: PILOT_ENDS_AT
+        sync: false
+      - key: AUTO_PUBLISH
+        value: "false"
+      - key: PORTAL_ORIGIN
+        sync: false
+      - key: ALLOWED_EMAILS
+        sync: false
+      - key: GITHUB_OAUTH_CLIENT_ID
+        sync: false
+      - key: GITHUB_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_INSTALLATION_ID
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+databases:
+  - name: myglplabs-portal-pilot-db
+    plan: free
+    region: oregon
+    postgresMajorVersion: "17"
+    ipAllowList: []

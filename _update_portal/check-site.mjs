@@ -1,0 +1,4 @@
+import{execFileSync}from'node:child_process';import{readFileSync}from'node:fs';import{FILES,validateChange,validateDocument}from'./policy.mjs';
+const root=new URL('..',import.meta.url),base=process.env.PORTAL_BASE_SHA;
+if(process.env.PORTAL_HEAD_REF?.startsWith('portal/change-')){if(!/^[a-f0-9]{40}$/.test(base||''))throw Error('Base SHA required');const paths=execFileSync('git',['diff','--name-only',base,'HEAD'],{cwd:root,encoding:'utf8'}).trim().split('\n');if(paths.some(p=>!FILES.includes(p)))throw Error('Automated change exceeds file allowlist');for(const path of paths)validateChange(path,execFileSync('git',['show',base+':'+path],{cwd:root,encoding:'utf8'}),readFileSync(new URL('../'+path,import.meta.url),'utf8'));}
+validateDocument(readFileSync(new URL('../content/site-editor.json',import.meta.url),'utf8'));console.log('Marketing editor schema, contrast and automated edit scope passed');

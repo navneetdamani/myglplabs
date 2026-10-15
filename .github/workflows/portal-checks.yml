@@ -1,0 +1,55 @@
+name: Portal checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  site-checks:
+    name: site-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: portal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+      - name: Install pinned dependencies
+        working-directory: _update_portal
+        run: |
+          npm install --global pnpm@11.25.0 --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Security and workflow tests
+        working-directory: _update_portal
+        env:
+          PG_TEST_URL: postgres://postgres:postgres@localhost:5432/portal_test
+        run: node --test test/*.test.mjs
+      - name: Website and edit-scope checks
+        working-directory: _update_portal
+        env:
+          PORTAL_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PORTAL_HEAD_REF: ${{ github.head_ref }}
+        run: node check-site.mjs
+      - name: Install website dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build public website
+        run: pnpm build
