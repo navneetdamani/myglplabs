@@ -1,21 +1,21 @@
 {
-  "copy": {
-    "heroEmphasis": "Without the runaround.",
-    "portraitLineOne": "Care that fits",
-    "portraitLineTwo": "real life.",
-    "howEyebrow": "A simpler path forward",
-    "howHeading": "Expert care in three easy steps.",
-    "previewEyebrow": "Care that keeps showing up",
-    "previewHeading": "One calm place for your whole plan.",
-    "faqEyebrow": "The fine print, in plain English",
-    "faqHeading": "Questions are part of good care.",
-    "ctaEyebrow": "Your next chapter can start small",
-    "ctaLineOne": "Ten minutes today.",
-    "ctaLineTwo": "A plan built for tomorrow.",
-    "footerTagline": "Thoughtful weight care, without the runaround."
-  },
-  "theme": {
-    "accent": "#b85e43",
-    "accentHover": "#9c4933"
-  }
+    "copy": {
+        "heroEmphasis": "Without the runaround.",
+        "portraitLineOne": "Care that fits",
+        "portraitLineTwo": "real life.",
+        "howEyebrow": "A simpler path forward",
+        "howHeading": "Expert care in three easy steps.",
+        "previewEyebrow": "Care that keeps showing up",
+        "previewHeading": "One calm place for your whole plan.",
+        "faqEyebrow": "The fine print, in plain English",
+        "faqHeading": "Questions are part of good care.",
+        "ctaEyebrow": "Your next chapter can start small",
+        "ctaLineOne": "Ten minutes today.",
+        "ctaLineTwo": "A plan built for tomorrow.",
+        "footerTagline": "Thoughtful weight care, without the runaround."
+    },
+    "theme": {
+        "accent": "#b85e43",
+        "accentHover": "#9c4933"
+    }
 }
