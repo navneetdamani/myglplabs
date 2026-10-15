@@ -48,7 +48,7 @@ export class Store {
     await client.connect();
     try {
       const lock=await client.query('SELECT pg_try_advisory_lock(1350958571) AS acquired');
-      if(!lock.rows[0].acquired)throw Error('Another portal instance is active');
+      if(!lock.rows[0].acquired)throw Object.assign(Error('Another portal instance is active'),{code:'PORTAL_ACTIVE'});
       await client.query(postgresSchema);
       const store=new Store(null,client);await store.verifyAudit();return store;
     }catch(error){await client.end();throw error;}
@@ -136,3 +136,4 @@ export class Store {
   }
   async close(){await this.tail;if(this.client)await this.client.end();else this.db.close();}
 }
+

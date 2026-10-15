@@ -5,6 +5,7 @@ import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { Store, digest, token } from './store.mjs';
 import { GitHub } from './github.mjs';
 import { Worker } from './worker.mjs';
+import { acquireStore,handoffServer } from './handoff.mjs';
 
 export function config(env=process.env) {
   const required = ['PORTAL_ORIGIN','ALLOWED_EMAILS','GITHUB_OAUTH_CLIENT_ID','GITHUB_OAUTH_CLIENT_SECRET',
@@ -169,17 +170,20 @@ export function setupServer(port) {
 if(process.argv[1]===fileURLToPath(import.meta.url) && process.env.SETUP_MODE==='true') {
   setupServer(Number(process.env.PORT || 10000));console.log('Setup mode: login and publishing disabled');
 } else if(process.argv[1]===fileURLToPath(import.meta.url)) {
+  let standby;
   try {
   const c=config();
-  let s;if(c.databaseUrl)s=await Store.postgres(c.databaseUrl);else{mkdirSync(c.dataDir,{recursive:true,mode:0o700});s=new Store(`${c.dataDir}/portal.sqlite`);}
+  let s;if(c.databaseUrl)s=await acquireStore(()=>Store.postgres(c.databaseUrl),()=>{standby=handoffServer(c.port);console.log('Waiting for previous portal instance to drain');});else{mkdirSync(c.dataDir,{recursive:true,mode:0o700});s=new Store(`${c.dataDir}/portal.sqlite`);}
   const g=new GitHub(c),w=new Worker(c,s,g);await w.recover();
-  const server=createServer(c,s,g,w);
+  const ready=createServer(c,s,g,w),server=standby||ready;
+  if(standby){standby.removeAllListeners('request');standby.on('request',ready.listeners('request')[0]);}
   server.requestTimeout=20000;server.headersTimeout=10000;
-  server.listen(c.port,'0.0.0.0',()=>console.log('Portal ready'));
+  if(!standby)server.listen(c.port,'0.0.0.0',()=>console.log('Portal ready'));else console.log('Portal ready');
   const timer=setInterval(()=>w.tick().catch(()=>console.error('Worker failed safely')),15000);
   for(const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>{
     clearInterval(timer);server.close(async()=>{await s.close();process.exit(0);});
     setTimeout(()=>process.exit(0),10000).unref();
   });
-  }catch{console.error('Portal startup failed; verify private configuration and database access');process.exitCode=1;}
+  }catch{if(standby)standby.close();console.error('Portal startup failed; verify private configuration and database access');process.exitCode=1;}
 }
+
